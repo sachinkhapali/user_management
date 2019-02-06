@@ -1,0 +1,70 @@
+import de.hybris.platform.servicelayer.model.*;
+import de.hybris.platform.servicelayer.search.*;
+import org.apache.commons.collections.*;
+import de.hybris.platform.core.model.product.*;
+
+int NO_OF_RECORDS_TO_SAVE=10;
+int TIME_INTERVAL_IN_MINUTES=60;
+Map conceptWisePercentage = new HashMap();
+conceptWisePercentage.put("LIFESTYLE",70);conceptWisePercentage.put("MAX",70);
+conceptWisePercentage.put("HOMECENTRE",30);
+
+
+ModelService modelService = spring.getBean("modelService");
+FlexibleSearchService flexibleSearchService = spring.getBean("flexibleSearchService");
+
+Map parameters = new HashMap();
+parameters.put("minutes",TIME_INTERVAL_IN_MINUTES);
+
+String query = "SELECT {parent.pk} FROM {product AS parent 
+                    LEFT JOIN product AS child ON {child.p_baseproduct}={parent.pk} 
+                    LEFT JOIN stocklevel AS stk ON {child.p_code}={stk.p_productcode} 
+                WHERE {parent.pk} IN (
+                    SELECT DISTINCT({prd.p_baseproduct}) AS bp 
+                        FROM {product AS prd LEFT JOIN stocklevel AS stock ON {stock.p_productcode}={prd.p_code} 
+                        WHERE {stock.p_productcode}} IN (?candidates)) GROUP BY  {parent.p_code}";
+
+List candidates = flexibleSearchService.search("SELECT {pk}  FROM {StockLevel} where ({available}-{itemreserved})=0 AND {modifiedtime} >= (NOW() - INTERVAL ?minutes MINUTE)",parameters).getResult();
+System.out.println("Stock updated in last "+TIME_INTERVAL_IN_MINUTES+" minutes "+candidates.size());
+
+List list;
+
+if(CollectionUtils.isNotEmpty(candidates)){
+    parameters.clear();
+    parameters.put("candidates",candidates);
+    Iterator iter = conceptWisePercentage.entrySet().iterator();
+    String concept;
+    int percentage;
+    while(iter.hasNext()){
+      Map.Entry entry = iter.next();
+      concept = entry.getKey();
+      percentage = entry.getValue();
+      parameters.put("concept",concept);
+      parameters.put("percentage",percentage);
+      System.out.println("Updating ranking for concept : "+concept);
+      list = flexibleSearchService.search(query,parameters).getResult();
+      System.out.println("Products ranking needs to be updated- "+list.size());
+      int start=0;
+      List temp= new ArrayList();
+      ProductModel p;
+      Integer rank;
+      for(;start<list.size();start++){
+       p = list.get(start);
+       try{
+         //rank = Integer.valueOf(p.getRanking())*10;
+         //Integer.valueOf(p.getRanking());
+         rank =9;
+         //System.out.println(p.getCode() +"  "+p.getRanking()+"    "+rank);
+         p.setRanking(rank.toString());   
+         temp.add(p);
+       }catch(NumberFormatException ex){
+          System.out.println("Not valid ranking for product:"+p.getCode());
+       }
+       if(temp.size() == NO_OF_RECORDS_TO_SAVE || ((start+1) == list.size())){
+            modelService.saveAll(temp);
+          temp.clear();
+           
+          }
+       }
+    }
+}
